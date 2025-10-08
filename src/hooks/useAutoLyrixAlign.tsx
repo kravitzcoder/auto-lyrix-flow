@@ -1,7 +1,6 @@
 /**
- * AutoLyrixAlign API Integration Hook
- * Connects the frontend to GitHub Actions backend processing
- * Updated to handle file size limitations
+ * AutoLyrixAlign API Integration Hook - REAL Progress Tracking
+ * Fixed to show actual GitHub Actions workflow progress
  */
 import { useState, useCallback } from 'react';
 
@@ -11,15 +10,9 @@ export interface AlignmentJob {
   status: 'starting' | 'processing' | 'completed' | 'failed' | 'timeout';
   progress: number;
   message: string;
-  results?: AlignmentResult[];
+  results?: any[];
   error?: string;
-}
-
-export interface AlignmentResult {
-  word: string;
-  start: number;
-  end: number;
-  confidence?: number;
+  workflowRunId?: number;
 }
 
 // Configuration
@@ -38,7 +31,7 @@ class AutoLyrixAPI {
   }
 
   /**
-   * Test GitHub token and repository access
+   * Test GitHub token
    */
   async testConnection(): Promise<{ success: boolean; error?: string }> {
     try {
@@ -49,7 +42,6 @@ class AutoLyrixAPI {
         };
       }
 
-      console.log('Testing GitHub connection...');
       const response = await fetch(
         `${GITHUB_CONFIG.baseUrl}/repos/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}`,
         {
@@ -60,36 +52,10 @@ class AutoLyrixAPI {
         }
       );
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        return { 
-          success: false, 
-          error: `GitHub API error: ${response.status} - ${errorText}` 
-        };
-      }
-
-      console.log('GitHub connection successful!');
-      return { success: true };
+      return { success: response.ok };
     } catch (error) {
-      console.error('GitHub connection test failed:', error);
-      return { 
-        success: false, 
-        error: error instanceof Error ? error.message : 'Unknown connection error' 
-      };
+      return { success: false, error: error instanceof Error ? error.message : 'Connection failed' };
     }
-  }
-
-  /**
-   * Process file metadata for demo
-   * In production, this would upload to cloud storage
-   */
-  private processFileForDemo(file: File): { filename: string; size: number; type: string; demo_note: string } {
-    return {
-      filename: file.name,
-      size: file.size,
-      type: file.type,
-      demo_note: "In production, file would be uploaded to cloud storage (AWS S3, Cloudinary, etc.) and URL sent to workflow"
-    };
   }
 
   /**
@@ -100,129 +66,108 @@ class AutoLyrixAPI {
     lyricsText: string,
     outputFormat: 'lrc' | 'json' | 'srt' = 'lrc'
   ): Promise<string> {
-    try {
-      // Test connection first
-      const connectionTest = await this.testConnection();
-      if (!connectionTest.success) {
-        throw new Error(connectionTest.error);
-      }
-
-      const jobId = this.generateJobId();
-      console.log('Generated job ID:', jobId);
-      
-      // Process file metadata (not the actual file content)
-      console.log('Processing file metadata...');
-      const fileInfo = this.processFileForDemo(audioFile);
-      
-      // Truncate lyrics if too long for demo
-      const truncatedLyrics = lyricsText.length > 1000 
-        ? lyricsText.substring(0, 1000) + "..." 
-        : lyricsText;
-      
-      console.log('Triggering GitHub Actions workflow...');
-      
-      // Create a payload that fits within GitHub's size limits
-      const payload = {
-        event_type: 'align-lyrics',
-        client_payload: {
-          job_id: jobId,
-          audio_file_info: fileInfo,
-          lyrics_text: truncatedLyrics,
-          format: outputFormat,
-          demo_mode: true,
-          timestamp: new Date().toISOString()
-        }
-      };
-      
-      console.log('Payload size check:', JSON.stringify(payload).length, 'characters');
-      
-      // Trigger GitHub Actions workflow via repository dispatch
-      const response = await fetch(
-        `${GITHUB_CONFIG.baseUrl}/repos/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}/dispatches`,
-        {
-          method: 'POST',
-          headers: {
-            'Authorization': `token ${GITHUB_CONFIG.token}`,
-            'Accept': 'application/vnd.github.v3+json',
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(payload)
-        }
-      );
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`GitHub API error: ${response.status} - ${errorText}`);
-      }
-
-      console.log('Workflow triggered successfully!');
-      return jobId;
-    } catch (error) {
-      console.error('Failed to start alignment:', error);
-      throw error;
+    const connectionTest = await this.testConnection();
+    if (!connectionTest.success) {
+      throw new Error(connectionTest.error);
     }
+
+    const jobId = this.generateJobId();
+    
+    // Process file metadata only (not actual content)
+    const fileInfo = {
+      filename: audioFile.name,
+      size: audioFile.size,
+      type: audioFile.type,
+      demo_note: "Demo mode - actual audio processing would happen in production"
+    };
+    
+    // Truncate lyrics if too long
+    const truncatedLyrics = lyricsText.length > 1000 
+      ? lyricsText.substring(0, 1000) + "..." 
+      : lyricsText;
+    
+    const payload = {
+      event_type: 'align-lyrics',
+      client_payload: {
+        job_id: jobId,
+        audio_file_info: fileInfo,
+        lyrics_text: truncatedLyrics,
+        format: outputFormat,
+        demo_mode: true,
+        timestamp: new Date().toISOString()
+      }
+    };
+    
+    const response = await fetch(
+      `${GITHUB_CONFIG.baseUrl}/repos/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}/dispatches`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `token ${GITHUB_CONFIG.token}`,
+          'Accept': 'application/vnd.github.v3+json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload)
+      }
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`GitHub API error: ${response.status} - ${errorText}`);
+    }
+
+    return jobId;
   }
 
   /**
-   * Check workflow status
+   * Get workflow runs since a specific time
    */
-  async checkWorkflowStatus(since?: Date): Promise<any[]> {
-    try {
-      const sinceParam = since ? `&created=${since.toISOString()}` : '';
-      const response = await fetch(
-        `${GITHUB_CONFIG.baseUrl}/repos/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}/actions/runs?per_page=10${sinceParam}`,
-        {
-          headers: {
-            'Authorization': `token ${GITHUB_CONFIG.token}`,
-            'Accept': 'application/vnd.github.v3+json',
-          }
+  async getWorkflowRuns(since: Date): Promise<any[]> {
+    const response = await fetch(
+      `${GITHUB_CONFIG.baseUrl}/repos/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}/actions/runs?per_page=20&created=${since.toISOString()}`,
+      {
+        headers: {
+          'Authorization': `token ${GITHUB_CONFIG.token}`,
+          'Accept': 'application/vnd.github.v3+json',
         }
-      );
-
-      if (!response.ok) {
-        throw new Error(`GitHub API error: ${response.status}`);
       }
+    );
 
-      const data = await response.json();
-      return data.workflow_runs.filter((run: any) => 
-        run.name === 'AutoLyrixAlign Processing'
-      );
-    } catch (error) {
-      console.error('Failed to check workflow status:', error);
-      throw error;
+    if (!response.ok) {
+      throw new Error(`Failed to fetch workflow runs: ${response.status}`);
     }
+
+    const data = await response.json();
+    return data.workflow_runs.filter((run: any) => 
+      run.name === 'AutoLyrixAlign Processing'
+    );
   }
 
   /**
-   * Get workflow artifacts (results)
+   * Get workflow artifacts
    */
   async getWorkflowArtifacts(runId: number): Promise<any[]> {
-    try {
-      const response = await fetch(
-        `${GITHUB_CONFIG.baseUrl}/repos/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}/actions/runs/${runId}/artifacts`,
-        {
-          headers: {
-            'Authorization': `token ${GITHUB_CONFIG.token}`,
-            'Accept': 'application/vnd.github.v3+json',
-          }
+    const response = await fetch(
+      `${GITHUB_CONFIG.baseUrl}/repos/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}/actions/runs/${runId}/artifacts`,
+      {
+        headers: {
+          'Authorization': `token ${GITHUB_CONFIG.token}`,
+          'Accept': 'application/vnd.github.v3+json',
         }
-      );
-
-      if (!response.ok) {
-        throw new Error(`GitHub API error: ${response.status}`);
       }
+    );
 
-      const data = await response.json();
-      return data.artifacts;
-    } catch (error) {
-      console.error('Failed to get artifacts:', error);
-      throw error;
+    if (!response.ok) {
+      throw new Error(`Failed to fetch artifacts: ${response.status}`);
     }
+
+    const data = await response.json();
+    return data.artifacts;
   }
 }
 
 /**
- * React Hook for AutoLyrixAlign processing
+ * React Hook for AutoLyrixAlign processing with REAL progress tracking
  */
 export function useAutoLyrixAlign() {
   const [currentJob, setCurrentJob] = useState<AlignmentJob | null>(null);
@@ -230,97 +175,138 @@ export function useAutoLyrixAlign() {
   const api = new AutoLyrixAPI();
 
   /**
-   * Start alignment process
+   * Start alignment process with REAL progress tracking
    */
   const startAlignment = useCallback(async (
     audioFile: File,
     lyricsText: string,
     outputFormat: 'lrc' | 'json' | 'srt' = 'lrc'
   ) => {
+    console.log('🚀 Starting alignment process...');
+    setIsProcessing(true);
+    
+    const job: AlignmentJob = {
+      jobId: '',
+      status: 'starting',
+      progress: 0,
+      message: 'Initializing...'
+    };
+    setCurrentJob(job);
+
     try {
-      setIsProcessing(true);
-      
-      // Initialize job
-      const job: AlignmentJob = {
-        jobId: '',
-        status: 'starting',
-        progress: 0,
-        message: 'Preparing to start alignment...'
-      };
-      setCurrentJob(job);
-
-      // Validate file size for demo
-      if (audioFile.size > 50 * 1024 * 1024) { // 50MB limit for demo
-        throw new Error('File too large for demo. Please use a file under 50MB.');
-      }
-
-      // Start the alignment
-      job.message = 'Testing connection...';
+      // Step 1: Test connection
+      job.message = 'Testing GitHub connection...';
       job.progress = 5;
       setCurrentJob({ ...job });
-
-      job.message = 'Processing file metadata...';
+      
+      // Step 2: Trigger workflow
+      job.message = 'Triggering GitHub Actions workflow...';
       job.progress = 15;
       setCurrentJob({ ...job });
       
       const jobId = await api.startAlignment(audioFile, lyricsText, outputFormat);
+      console.log('✅ Workflow triggered, Job ID:', jobId);
       
       job.jobId = jobId;
       job.status = 'processing';
-      job.message = 'Workflow triggered! Waiting for GitHub Actions to process...';
-      job.progress = 30;
+      job.message = 'Workflow started! Waiting for processing...';
+      job.progress = 25;
       setCurrentJob({ ...job });
 
-      // Poll for completion
+      // Step 3: Poll for completion with REAL GitHub Actions status
       const startTime = Date.now();
-      const maxWaitTime = 5 * 60 * 1000; // 5 minutes for demo
-      const pollInterval = 15000; // 15 seconds
+      const maxWaitTime = 8 * 60 * 1000; // 8 minutes
+      const pollInterval = 10000; // 10 seconds
 
       const pollForCompletion = async (): Promise<void> => {
-        if (Date.now() - startTime > maxWaitTime) {
+        const elapsedTime = Date.now() - startTime;
+        
+        if (elapsedTime > maxWaitTime) {
           job.status = 'timeout';
-          job.message = 'Demo timeout reached. Check GitHub Actions for results.';
+          job.message = 'Processing timed out. Check GitHub Actions for results.';
           job.progress = 95;
           setCurrentJob({ ...job });
+          setIsProcessing(false);
           return;
         }
 
         try {
-          // Check recent workflow runs
-          const workflows = await api.checkWorkflowStatus(new Date(startTime));
-          const relevantRun = workflows.find((run: any) => 
-            run.created_at > new Date(startTime - 60000).toISOString()
-          );
+          console.log('🔍 Polling for workflow status...');
+          
+          // Get recent workflow runs
+          const workflows = await api.getWorkflowRuns(new Date(startTime - 30000)); // 30 seconds before start
+          console.log('📊 Found workflows:', workflows.length);
+          
+          // Find the most recent workflow (should be ours)
+          const recentRun = workflows.find((run: any) => {
+            const runCreatedAt = new Date(run.created_at).getTime();
+            return runCreatedAt >= startTime - 60000; // Within 1 minute of start
+          });
 
-          if (relevantRun) {
-            job.progress = relevantRun.status === 'in_progress' ? 70 : 85;
-            job.message = relevantRun.status === 'in_progress' 
-              ? 'GitHub Actions is processing your request...' 
-              : 'Finalizing results...';
-            setCurrentJob({ ...job });
-
-            if (relevantRun.conclusion === 'success') {
-              // Get artifacts
-              const artifacts = await api.getWorkflowArtifacts(relevantRun.id);
-              job.status = 'completed';
-              job.progress = 100;
-              job.message = 'Alignment completed successfully!';
-              job.results = artifacts;
+          if (recentRun) {
+            console.log('🎯 Found matching workflow run:', recentRun.id, 'Status:', recentRun.status, 'Conclusion:', recentRun.conclusion);
+            
+            job.workflowRunId = recentRun.id;
+            
+            // Update progress based on actual workflow status
+            if (recentRun.status === 'in_progress') {
+              job.progress = Math.min(job.progress + 10, 80); // Gradually increase to 80%
+              job.message = 'GitHub Actions is processing your request...';
               setCurrentJob({ ...job });
-              return;
-            } else if (relevantRun.conclusion === 'failure') {
-              job.status = 'failed';
-              job.error = 'GitHub Actions workflow failed. Check the Actions tab for details.';
-              job.message = 'Processing failed';
-              setCurrentJob({ ...job });
-              return;
+              
+            } else if (recentRun.status === 'completed') {
+              if (recentRun.conclusion === 'success') {
+                console.log('✅ Workflow completed successfully!');
+                
+                // Get artifacts
+                job.message = 'Fetching results...';
+                job.progress = 90;
+                setCurrentJob({ ...job });
+                
+                try {
+                  const artifacts = await api.getWorkflowArtifacts(recentRun.id);
+                  console.log('📦 Found artifacts:', artifacts.length);
+                  
+                  job.status = 'completed';
+                  job.progress = 100;
+                  job.message = 'Alignment completed successfully!';
+                  job.results = artifacts;
+                  setCurrentJob({ ...job });
+                  setIsProcessing(false);
+                  return;
+                  
+                } catch (artifactError) {
+                  console.error('❌ Failed to fetch artifacts:', artifactError);
+                  job.status = 'completed';
+                  job.progress = 100;
+                  job.message = 'Processing completed! Check GitHub Actions for files.';
+                  setCurrentJob({ ...job });
+                  setIsProcessing(false);
+                  return;
+                }
+                
+              } else {
+                console.error('❌ Workflow failed with conclusion:', recentRun.conclusion);
+                job.status = 'failed';
+                job.error = `GitHub Actions workflow failed: ${recentRun.conclusion}`;
+                job.message = 'Processing failed. Check GitHub Actions for details.';
+                setCurrentJob({ ...job });
+                setIsProcessing(false);
+                return;
+              }
             }
+          } else {
+            // No workflow found yet, keep waiting
+            job.message = `Waiting for workflow to start... (${Math.round(elapsedTime/1000)}s)`;
+            setCurrentJob({ ...job });
           }
 
           // Continue polling
           setTimeout(pollForCompletion, pollInterval);
-        } catch (error) {
-          console.error('Polling error:', error);
+          
+        } catch (pollError) {
+          console.error('❌ Polling error:', pollError);
+          // Continue polling despite errors
           setTimeout(pollForCompletion, pollInterval);
         }
       };
@@ -329,30 +315,30 @@ export function useAutoLyrixAlign() {
       setTimeout(pollForCompletion, 5000);
 
     } catch (error) {
-      console.error('Alignment failed:', error);
-      const job: AlignmentJob = {
+      console.error('❌ Alignment failed:', error);
+      const failedJob: AlignmentJob = {
         jobId: '',
         status: 'failed',
         progress: 0,
         message: 'Failed to start alignment',
         error: error instanceof Error ? error.message : 'Unknown error occurred'
       };
-      setCurrentJob(job);
-      throw error;
-    } finally {
+      setCurrentJob(failedJob);
       setIsProcessing(false);
+      throw error;
     }
   }, []);
 
   /**
-   * Reset current job
+   * Reset job state
    */
   const reset = useCallback(() => {
+    console.log('🔄 Resetting job state');
     setCurrentJob(null);
     setIsProcessing(false);
   }, []);
 
-  // Match the API expected by FileUpload component
+  // Return the expected API for FileUpload component
   return {
     startAlignment,
     isProcessing,
@@ -363,17 +349,18 @@ export function useAutoLyrixAlign() {
     },
     error: currentJob?.error,
     result: currentJob?.status === 'completed' ? {
-      downloadUrl: `https://github.com/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}/actions`,
-      artifacts: currentJob.results
+      downloadUrl: currentJob.workflowRunId 
+        ? `https://github.com/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}/actions/runs/${currentJob.workflowRunId}`
+        : `https://github.com/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}/actions`,
+      artifacts: currentJob.results || []
     } : null,
     reset,
     
-    // Additional properties
+    // Additional debug properties
     currentJob,
     status: currentJob?.status || 'idle',
     isCompleted: currentJob?.status === 'completed',
-    isFailed: currentJob?.status === 'failed',
-    hasResults: Boolean(currentJob?.results?.length)
+    isFailed: currentJob?.status === 'failed'
   };
 }
 
