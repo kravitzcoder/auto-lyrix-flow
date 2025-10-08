@@ -1,6 +1,7 @@
 /**
  * AutoLyrixAlign API Integration Hook
  * Connects the frontend to GitHub Actions backend processing
+ * Updated to handle file size limitations
  */
 import { useState, useCallback } from 'react';
 
@@ -21,21 +22,11 @@ export interface AlignmentResult {
   confidence?: number;
 }
 
-export interface AlignmentMetadata {
-  job_id: string;
-  status: string;
-  output_format: string;
-  word_count: number;
-  duration: number;
-  average_confidence: number;
-  output_file: string;
-}
-
 // Configuration
 const GITHUB_CONFIG = {
   owner: 'kravitzcoder',
   repo: 'auto-lyrix-flow',
-  token: import.meta.env.VITE_GITHUB_TOKEN, // Set in Netlify env vars
+  token: import.meta.env.VITE_GITHUB_TOKEN,
   baseUrl: 'https://api.github.com'
 };
 
@@ -89,26 +80,16 @@ class AutoLyrixAPI {
   }
 
   /**
-   * Upload file to temporary storage
-   * In this example, we'll use a data URL for small files
-   * For production, integrate with Cloudinary, AWS S3, etc.
+   * Process file metadata for demo
+   * In production, this would upload to cloud storage
    */
-  private async uploadFile(file: File): Promise<string> {
-    return new Promise((resolve, reject) => {
-      if (file.size > 50 * 1024 * 1024) { // 50MB limit
-        reject(new Error('File too large. Maximum size is 50MB.'));
-        return;
-      }
-
-      const reader = new FileReader();
-      reader.onload = () => {
-        // For demo purposes, we'll use data URLs
-        // In production, upload to actual file storage
-        resolve(reader.result as string);
-      };
-      reader.onerror = () => reject(new Error('Failed to read file'));
-      reader.readAsDataURL(file);
-    });
+  private processFileForDemo(file: File): { filename: string; size: number; type: string; demo_note: string } {
+    return {
+      filename: file.name,
+      size: file.size,
+      type: file.type,
+      demo_note: "In production, file would be uploaded to cloud storage (AWS S3, Cloudinary, etc.) and URL sent to workflow"
+    };
   }
 
   /**
@@ -129,11 +110,32 @@ class AutoLyrixAPI {
       const jobId = this.generateJobId();
       console.log('Generated job ID:', jobId);
       
-      // Upload audio file (or get URL)
-      console.log('Processing audio file...');
-      const audioUrl = await this.uploadFile(audioFile);
+      // Process file metadata (not the actual file content)
+      console.log('Processing file metadata...');
+      const fileInfo = this.processFileForDemo(audioFile);
+      
+      // Truncate lyrics if too long for demo
+      const truncatedLyrics = lyricsText.length > 1000 
+        ? lyricsText.substring(0, 1000) + "..." 
+        : lyricsText;
       
       console.log('Triggering GitHub Actions workflow...');
+      
+      // Create a payload that fits within GitHub's size limits
+      const payload = {
+        event_type: 'align-lyrics',
+        client_payload: {
+          job_id: jobId,
+          audio_file_info: fileInfo,
+          lyrics_text: truncatedLyrics,
+          format: outputFormat,
+          demo_mode: true,
+          timestamp: new Date().toISOString()
+        }
+      };
+      
+      console.log('Payload size check:', JSON.stringify(payload).length, 'characters');
+      
       // Trigger GitHub Actions workflow via repository dispatch
       const response = await fetch(
         `${GITHUB_CONFIG.baseUrl}/repos/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}/dispatches`,
@@ -144,15 +146,7 @@ class AutoLyrixAPI {
             'Accept': 'application/vnd.github.v3+json',
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({
-            event_type: 'align-lyrics',
-            client_payload: {
-              audio_url: audioUrl,
-              lyrics_text: lyricsText,
-              format: outputFormat,
-              job_id: jobId
-            }
-          })
+          body: JSON.stringify(payload)
         }
       );
 
@@ -229,7 +223,6 @@ class AutoLyrixAPI {
 
 /**
  * React Hook for AutoLyrixAlign processing
- * Updated to match FileUpload component expectations
  */
 export function useAutoLyrixAlign() {
   const [currentJob, setCurrentJob] = useState<AlignmentJob | null>(null);
@@ -256,12 +249,17 @@ export function useAutoLyrixAlign() {
       };
       setCurrentJob(job);
 
+      // Validate file size for demo
+      if (audioFile.size > 50 * 1024 * 1024) { // 50MB limit for demo
+        throw new Error('File too large for demo. Please use a file under 50MB.');
+      }
+
       // Start the alignment
       job.message = 'Testing connection...';
       job.progress = 5;
       setCurrentJob({ ...job });
 
-      job.message = 'Starting alignment process...';
+      job.message = 'Processing file metadata...';
       job.progress = 15;
       setCurrentJob({ ...job });
       
@@ -269,19 +267,20 @@ export function useAutoLyrixAlign() {
       
       job.jobId = jobId;
       job.status = 'processing';
-      job.message = 'AI is analyzing audio and aligning lyrics...';
+      job.message = 'Workflow triggered! Waiting for GitHub Actions to process...';
       job.progress = 30;
       setCurrentJob({ ...job });
 
       // Poll for completion
       const startTime = Date.now();
-      const maxWaitTime = 10 * 60 * 1000; // 10 minutes
-      const pollInterval = 10000; // 10 seconds
+      const maxWaitTime = 5 * 60 * 1000; // 5 minutes for demo
+      const pollInterval = 15000; // 15 seconds
 
       const pollForCompletion = async (): Promise<void> => {
         if (Date.now() - startTime > maxWaitTime) {
           job.status = 'timeout';
-          job.message = 'Processing timed out. Please try again with a smaller file.';
+          job.message = 'Demo timeout reached. Check GitHub Actions for results.';
+          job.progress = 95;
           setCurrentJob({ ...job });
           return;
         }
@@ -290,14 +289,13 @@ export function useAutoLyrixAlign() {
           // Check recent workflow runs
           const workflows = await api.checkWorkflowStatus(new Date(startTime));
           const relevantRun = workflows.find((run: any) => 
-            run.created_at > new Date(startTime - 60000).toISOString() && // Within last minute of start
-            (run.status === 'completed' || run.status === 'in_progress')
+            run.created_at > new Date(startTime - 60000).toISOString()
           );
 
           if (relevantRun) {
-            job.progress = relevantRun.status === 'in_progress' ? 70 : 90;
+            job.progress = relevantRun.status === 'in_progress' ? 70 : 85;
             job.message = relevantRun.status === 'in_progress' 
-              ? 'Processing audio and lyrics...' 
+              ? 'GitHub Actions is processing your request...' 
               : 'Finalizing results...';
             setCurrentJob({ ...job });
 
@@ -312,7 +310,7 @@ export function useAutoLyrixAlign() {
               return;
             } else if (relevantRun.conclusion === 'failure') {
               job.status = 'failed';
-              job.error = 'Processing failed. Please check your audio file and try again.';
+              job.error = 'GitHub Actions workflow failed. Check the Actions tab for details.';
               job.message = 'Processing failed';
               setCurrentJob({ ...job });
               return;
@@ -354,20 +352,6 @@ export function useAutoLyrixAlign() {
     setIsProcessing(false);
   }, []);
 
-  /**
-   * Download result file
-   */
-  const downloadResult = useCallback(async (artifact: any) => {
-    try {
-      // Note: GitHub artifact download requires authentication
-      // For now, we'll open the GitHub Actions page
-      const runUrl = `https://github.com/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}/actions`;
-      window.open(runUrl, '_blank');
-    } catch (error) {
-      console.error('Download failed:', error);
-    }
-  }, []);
-
   // Match the API expected by FileUpload component
   return {
     startAlignment,
@@ -384,9 +368,8 @@ export function useAutoLyrixAlign() {
     } : null,
     reset,
     
-    // Additional properties for debugging
+    // Additional properties
     currentJob,
-    downloadResult,
     status: currentJob?.status || 'idle',
     isCompleted: currentJob?.status === 'completed',
     isFailed: currentJob?.status === 'failed',
