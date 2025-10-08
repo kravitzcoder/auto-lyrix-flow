@@ -1,40 +1,114 @@
 name: AutoLyrixAlign Processing
+
 on:
+  # Allow manual triggering for testing
+  workflow_dispatch:
+    inputs:
+      audio_url:
+        description: 'Audio file URL or path'
+        required: true
+        type: string
+      lyrics_text:
+        description: 'Lyrics text content'
+        required: true
+        type: string
+      format:
+        description: 'Output format'
+        required: false
+        default: 'lrc'
+        type: choice
+        options:
+          - lrc
+          - json
+          - srt
+      job_id:
+        description: 'Job ID for tracking'
+        required: false
+        type: string
+        default: 'manual-test'
+
+  # API trigger from frontend
   repository_dispatch:
     types: [align-lyrics]
 
 jobs:
   align-lyrics:
     runs-on: ubuntu-latest
+    
     steps:
-    - uses: actions/checkout@v3
-    
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.8'
-    
-    - name: Install dependencies
-      run: |
-        pip install librosa torch transformers
-        sudo apt-get update
-        sudo apt-get install -y ffmpeg
-    
-    - name: Download AutoLyrixAlign model
-      run: |
-        # Download pre-trained model
-        wget -O model.zip "https://drive.google.com/uc?export=download&id=1zJdhPr9SzTVRXIaiZ7eF_QKN0PT2sbIW"
-        unzip model.zip
-    
-    - name: Process alignment
-      run: |
-        python align_lyrics.py \
-          --audio "${{ github.event.client_payload.audio_url }}" \
-          --lyrics "${{ github.event.client_payload.lyrics_text }}" \
-          --output-format "${{ github.event.client_payload.format }}"
-    
-    - name: Upload results
-      uses: actions/upload-artifact@v3
-      with:
-        name: aligned-lyrics-${{ github.event.client_payload.job_id }}
-        path: output/
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+          
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install librosa torch transformers numpy scipy
+          
+      - name: Debug inputs
+        run: |
+          echo "Event name: ${{ github.event_name }}"
+          echo "Repository dispatch type: ${{ github.event.action }}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "Audio URL: ${{ github.event.inputs.audio_url }}"
+            echo "Lyrics: ${{ github.event.inputs.lyrics_text }}"
+            echo "Format: ${{ github.event.inputs.format }}"
+            echo "Job ID: ${{ github.event.inputs.job_id }}"
+          else
+            echo "Audio URL: ${{ github.event.client_payload.audio_url }}"
+            echo "Lyrics: ${{ github.event.client_payload.lyrics_text }}"
+            echo "Format: ${{ github.event.client_payload.format }}"
+            echo "Job ID: ${{ github.event.client_payload.job_id }}"
+          fi
+          
+      - name: Create output directory
+        run: mkdir -p output
+        
+      - name: Process alignment
+        run: |
+          # Set variables based on trigger type
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            AUDIO_URL="${{ github.event.inputs.audio_url }}"
+            LYRICS_TEXT="${{ github.event.inputs.lyrics_text }}"
+            OUTPUT_FORMAT="${{ github.event.inputs.format }}"
+            JOB_ID="${{ github.event.inputs.job_id }}"
+          else
+            AUDIO_URL="${{ github.event.client_payload.audio_url }}"
+            LYRICS_TEXT="${{ github.event.client_payload.lyrics_text }}"
+            OUTPUT_FORMAT="${{ github.event.client_payload.format }}"
+            JOB_ID="${{ github.event.client_payload.job_id }}"
+          fi
+          
+          # Run the alignment script
+          python align_lyrics.py \
+            --audio "$AUDIO_URL" \
+            --lyrics "$LYRICS_TEXT" \
+            --output-format "$OUTPUT_FORMAT" \
+            --job-id "$JOB_ID"
+            
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aligned-lyrics-${{ github.event.client_payload.job_id || github.event.inputs.job_id || 'manual' }}
+          path: output/
+          retention-days: 7
+          
+      - name: Upload logs
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: debug-logs-${{ github.event.client_payload.job_id || github.event.inputs.job_id || 'manual' }}
+          path: |
+            *.log
+            /tmp/*.log
+          retention-days: 3
