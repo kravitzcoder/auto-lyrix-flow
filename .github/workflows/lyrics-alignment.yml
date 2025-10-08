@@ -1,7 +1,6 @@
 name: AutoLyrixAlign Processing
 
 on:
-  # Allow manual triggering for testing
   workflow_dispatch:
     inputs:
       audio_file_info:
@@ -29,7 +28,6 @@ on:
         type: string
         default: 'manual-test'
 
-  # API trigger from frontend
   repository_dispatch:
     types: [align-lyrics]
 
@@ -46,184 +44,187 @@ jobs:
         with:
           python-version: '3.9'
           
-      - name: Debug workflow trigger
-        run: |
-          echo "=== Workflow Debug Information ==="
-          echo "Event name: ${{ github.event_name }}"
-          echo "Repository: ${{ github.repository }}"
-          echo "Run ID: ${{ github.run_id }}"
-          echo "Timestamp: $(date)"
-          
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
-          echo "FFmpeg installed successfully"
           
       - name: Install Python dependencies
         run: |
           pip install --upgrade pip
-          echo "Python dependencies installation completed"
           
-      - name: Create output directory
+      - name: Create directories
         run: |
           mkdir -p output
           mkdir -p temp
-          echo "Directories created"
           
-      - name: Prepare input data
+      - name: Save inputs to files
         run: |
-          echo "Preparing input files to avoid shell escaping issues..."
-          
-          # Set variables based on trigger type
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo '${{ github.event.inputs.audio_file_info }}' > temp/audio_info.json
-            echo '${{ github.event.inputs.lyrics_text }}' > temp/lyrics.txt
             echo "${{ github.event.inputs.format }}" > temp/format.txt
             echo "${{ github.event.inputs.job_id }}" > temp/job_id.txt
+            cat > temp/lyrics.txt << 'LYRICS_EOF'
+          ${{ github.event.inputs.lyrics_text }}
+          LYRICS_EOF
           else
             echo '${{ github.event.client_payload.audio_file_info }}' > temp/audio_info.json
-            echo '${{ github.event.client_payload.lyrics_text }}' > temp/lyrics.txt
             echo "${{ github.event.client_payload.format }}" > temp/format.txt
             echo "${{ github.event.client_payload.job_id }}" > temp/job_id.txt
+            cat > temp/lyrics.txt << 'LYRICS_EOF'
+          ${{ github.event.client_payload.lyrics_text }}
+          LYRICS_EOF
           fi
           
-          echo "Input files prepared:"
-          echo "Audio info file size: $(wc -c < temp/audio_info.json) bytes"
-          echo "Lyrics file size: $(wc -c < temp/lyrics.txt) bytes"
-          echo "Format: $(cat temp/format.txt)"
-          echo "Job ID: $(cat temp/job_id.txt)"
-          
-      - name: Process alignment
+      - name: Create processing script
         run: |
-          echo "Starting alignment processing..."
+          cat > process_alignment.py << 'SCRIPT_EOF'
+          import os
+          import json
+          from datetime import datetime
+          from pathlib import Path
           
-          # Read values from files to avoid shell escaping issues
-          AUDIO_INFO=$(cat temp/audio_info.json)
-          LYRICS_TEXT=$(cat temp/lyrics.txt)
-          OUTPUT_FORMAT=$(cat temp/format.txt)
-          JOB_ID=$(cat temp/job_id.txt)
+          def create_demo_lrc(lyrics_text, job_id, filename):
+              lines = lyrics_text.strip().split('\n')
+              lrc_content = []
+              
+              lrc_content.append(f"[ar:Demo Artist]")
+              lrc_content.append(f"[ti:Demo Song - {filename}]")
+              lrc_content.append(f"[al:AutoLyrixAlign Demo]")
+              lrc_content.append(f"[by:AutoLyrixAlign v1.0]")
+              lrc_content.append(f"[offset:0]")
+              lrc_content.append("")
+              
+              current_time = 0
+              for i, line in enumerate(lines[:20]):
+                  if line.strip():
+                      minutes = current_time // 60
+                      seconds = current_time % 60
+                      timestamp = f"[{minutes:02d}:{seconds:05.2f}]"
+                      lrc_content.append(f"{timestamp}{line.strip()}")
+                      current_time += 3
+              
+              return "\n".join(lrc_content)
           
-          echo "Processing with Job ID: $JOB_ID"
-          echo "Output format: $OUTPUT_FORMAT"
-          echo "Lyrics preview (first 100 chars): ${LYRICS_TEXT:0:100}..."
+          def create_demo_json(lyrics_text, job_id, filename):
+              words = lyrics_text.split()[:50]
+              word_timings = []
+              
+              current_time = 0.0
+              for word in words:
+                  word_timings.append({
+                      "word": word,
+                      "start": current_time,
+                      "end": current_time + 0.5,
+                      "confidence": 0.95
+                  })
+                  current_time += 0.6
+              
+              return {
+                  "job_id": job_id,
+                  "filename": filename,
+                  "demo_mode": True,
+                  "word_count": len(words),
+                  "duration": current_time,
+                  "words": word_timings,
+                  "metadata": {
+                      "processed_at": datetime.now().isoformat(),
+                      "model_version": "demo-v1.0",
+                      "note": "This is demo output. In production, real AI alignment would be performed."
+                  }
+              }
           
-          # Use Python with file inputs to avoid shell issues
-          python3 << 'EOF'
-import sys
-import os
-import json
-from pathlib import Path
-
-# Read input files
-with open('temp/audio_info.json', 'r', encoding='utf-8') as f:
-    audio_info = f.read().strip()
-    
-with open('temp/lyrics.txt', 'r', encoding='utf-8') as f:
-    lyrics_text = f.read().strip()
-    
-with open('temp/format.txt', 'r', encoding='utf-8') as f:
-    output_format = f.read().strip()
-    
-with open('temp/job_id.txt', 'r', encoding='utf-8') as f:
-    job_id = f.read().strip()
-
-print(f"Python processing started...")
-print(f"Job ID: {job_id}")
-print(f"Format: {output_format}")
-print(f"Lyrics length: {len(lyrics_text)} characters")
-
-# Import and run the alignment script
-sys.path.append('.')
-from align_lyrics import create_demo_lrc, create_demo_json
-from datetime import datetime
-
-# Create output directory
-os.makedirs('output', exist_ok=True)
-
-# Parse audio info
-try:
-    audio_data = json.loads(audio_info)
-    audio_filename = audio_data.get('filename', 'demo-audio')
-except:
-    audio_filename = 'demo-audio'
-
-print(f"Audio filename: {audio_filename}")
-
-# Generate output
-base_filename = f"aligned_{job_id}"
-
-if output_format == 'lrc':
-    from align_lyrics import create_demo_lrc
-    content = create_demo_lrc(lyrics_text, job_id, audio_filename)
-    output_file = f"output/{base_filename}.lrc"
-    
-elif output_format == 'json':
-    from align_lyrics import create_demo_json
-    content = json.dumps(
-        create_demo_json(lyrics_text, job_id, audio_filename), 
-        indent=2
-    )
-    output_file = f"output/{base_filename}.json"
-    
-else:  # srt
-    lines = lyrics_text.strip().split('\n')[:10]
-    srt_content = []
-    current_time = 0
-    
-    for i, line in enumerate(lines, 1):
-        if line.strip():
-            start_time = f"00:{current_time//60:02d}:{current_time%60:02d},000"
-            end_time = f"00:{(current_time+3)//60:02d}:{(current_time+3)%60:02d},000"
-            srt_content.extend([
-                str(i),
-                f"{start_time} --> {end_time}",
-                line.strip(),
-                ""
-            ])
-            current_time += 3
-    
-    content = "\n".join(srt_content)
-    output_file = f"output/{base_filename}.srt"
-
-# Write output file
-with open(output_file, 'w', encoding='utf-8') as f:
-    f.write(content)
-    
-print(f"✅ Generated: {output_file}")
-
-# Create metadata file
-metadata = {
-    "job_id": job_id,
-    "audio_filename": audio_filename,
-    "output_format": output_format,
-    "output_file": output_file,
-    "lyrics_length": len(lyrics_text),
-    "processed_at": datetime.now().isoformat(),
-    "demo_mode": True,
-    "status": "completed"
-}
-
-metadata_file = f"output/{base_filename}_metadata.json"
-with open(metadata_file, 'w', encoding='utf-8') as f:
-    json.dump(metadata, f, indent=2)
-    
-print(f"📊 Metadata: {metadata_file}")
-print("🎉 Demo processing completed successfully!")
-EOF
+          # Read input files
+          with open('temp/audio_info.json', 'r', encoding='utf-8') as f:
+              audio_info = f.read().strip()
+              
+          with open('temp/lyrics.txt', 'r', encoding='utf-8') as f:
+              lyrics_text = f.read().strip()
+              
+          with open('temp/format.txt', 'r', encoding='utf-8') as f:
+              output_format = f.read().strip()
+              
+          with open('temp/job_id.txt', 'r', encoding='utf-8') as f:
+              job_id = f.read().strip()
           
-          echo "Python processing completed!"
+          print(f"🎵 Processing Job ID: {job_id}")
+          print(f"📄 Lyrics length: {len(lyrics_text)} characters")
+          print(f"🎯 Output format: {output_format}")
+          
+          # Parse audio info
+          try:
+              audio_data = json.loads(audio_info)
+              audio_filename = audio_data.get('filename', 'demo-audio')
+          except:
+              audio_filename = 'demo-audio'
+          
+          # Generate output
+          base_filename = f"aligned_{job_id}"
+          
+          if output_format == 'lrc':
+              content = create_demo_lrc(lyrics_text, job_id, audio_filename)
+              output_file = f"output/{base_filename}.lrc"
+              
+          elif output_format == 'json':
+              content = json.dumps(create_demo_json(lyrics_text, job_id, audio_filename), indent=2)
+              output_file = f"output/{base_filename}.json"
+              
+          else:  # srt
+              lines = lyrics_text.strip().split('\n')[:10]
+              srt_content = []
+              current_time = 0
+              
+              for i, line in enumerate(lines, 1):
+                  if line.strip():
+                      start_time = f"00:{current_time//60:02d}:{current_time%60:02d},000"
+                      end_time = f"00:{(current_time+3)//60:02d}:{(current_time+3)%60:02d},000"
+                      srt_content.extend([str(i), f"{start_time} --> {end_time}", line.strip(), ""])
+                      current_time += 3
+              
+              content = "\n".join(srt_content)
+              output_file = f"output/{base_filename}.srt"
+          
+          # Write output file
+          with open(output_file, 'w', encoding='utf-8') as f:
+              f.write(content)
+              
+          print(f"✅ Generated: {output_file}")
+          
+          # Create metadata
+          metadata = {
+              "job_id": job_id,
+              "audio_filename": audio_filename,
+              "output_format": output_format,
+              "output_file": output_file,
+              "lyrics_length": len(lyrics_text),
+              "processed_at": datetime.now().isoformat(),
+              "demo_mode": True,
+              "status": "completed"
+          }
+          
+          metadata_file = f"output/{base_filename}_metadata.json"
+          with open(metadata_file, 'w', encoding='utf-8') as f:
+              json.dump(metadata, f, indent=2)
+              
+          print(f"📊 Metadata: {metadata_file}")
+          print("🎉 Demo processing completed successfully!")
+          SCRIPT_EOF
+          
+      - name: Run alignment processing
+        run: python process_alignment.py
           
       - name: List output files
         run: |
           echo "=== Generated Output Files ==="
           ls -la output/
           echo ""
-          echo "=== File Contents Preview ==="
-          for file in output/*; do
-            echo "--- $file ---"
-            head -20 "$file" 2>/dev/null || echo "(binary or empty file)"
-            echo ""
+          echo "=== Sample Output ==="
+          for file in output/*.lrc output/*.json output/*.srt; do
+            if [ -f "$file" ]; then
+              echo "--- $file ---"
+              head -10 "$file"
+              echo ""
+            fi
           done
           
       - name: Upload results
