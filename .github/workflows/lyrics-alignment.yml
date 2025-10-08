@@ -4,14 +4,16 @@ on:
   # Allow manual triggering for testing
   workflow_dispatch:
     inputs:
-      audio_url:
-        description: 'Audio file URL or path'
+      audio_file_info:
+        description: 'Audio file metadata (JSON)'
         required: true
         type: string
+        default: '{"filename": "test.mp3", "size": 5000000, "type": "audio/mpeg"}'
       lyrics_text:
         description: 'Lyrics text content'
         required: true
         type: string
+        default: 'Sample lyrics line 1\nSample lyrics line 2\nSample lyrics line 3'
       format:
         description: 'Output format'
         required: false
@@ -44,57 +46,87 @@ jobs:
         with:
           python-version: '3.9'
           
+      - name: Debug workflow trigger
+        run: |
+          echo "=== Workflow Debug Information ==="
+          echo "Event name: ${{ github.event_name }}"
+          echo "Repository: ${{ github.repository }}"
+          echo "Run ID: ${{ github.run_id }}"
+          echo "Timestamp: $(date)"
+          
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "=== Manual Trigger (workflow_dispatch) ==="
+            echo "Audio file info: ${{ github.event.inputs.audio_file_info }}"
+            echo "Lyrics (first 100 chars): ${{ github.event.inputs.lyrics_text }}"
+            echo "Format: ${{ github.event.inputs.format }}"
+            echo "Job ID: ${{ github.event.inputs.job_id }}"
+          else
+            echo "=== API Trigger (repository_dispatch) ==="
+            echo "Action: ${{ github.event.action }}"
+            echo "Audio file info: ${{ github.event.client_payload.audio_file_info }}"
+            echo "Lyrics (first 100 chars): ${{ github.event.client_payload.lyrics_text }}"
+            echo "Format: ${{ github.event.client_payload.format }}"
+            echo "Job ID: ${{ github.event.client_payload.job_id }}"
+            echo "Demo mode: ${{ github.event.client_payload.demo_mode }}"
+          fi
+          
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
+          echo "FFmpeg installed successfully"
           
       - name: Install Python dependencies
         run: |
           pip install --upgrade pip
-          pip install librosa torch transformers numpy scipy
-          
-      - name: Debug inputs
-        run: |
-          echo "Event name: ${{ github.event_name }}"
-          echo "Repository dispatch type: ${{ github.event.action }}"
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "Audio URL: ${{ github.event.inputs.audio_url }}"
-            echo "Lyrics: ${{ github.event.inputs.lyrics_text }}"
-            echo "Format: ${{ github.event.inputs.format }}"
-            echo "Job ID: ${{ github.event.inputs.job_id }}"
-          else
-            echo "Audio URL: ${{ github.event.client_payload.audio_url }}"
-            echo "Lyrics: ${{ github.event.client_payload.lyrics_text }}"
-            echo "Format: ${{ github.event.client_payload.format }}"
-            echo "Job ID: ${{ github.event.client_payload.job_id }}"
-          fi
+          echo "Python dependencies installation completed"
           
       - name: Create output directory
-        run: mkdir -p output
-        
+        run: |
+          mkdir -p output
+          echo "Output directory created"
+          
       - name: Process alignment
         run: |
+          echo "Starting alignment processing..."
+          
           # Set variables based on trigger type
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            AUDIO_URL="${{ github.event.inputs.audio_url }}"
-            LYRICS_TEXT="${{ github.event.inputs.lyrics_text }}"
+            AUDIO_INFO='${{ github.event.inputs.audio_file_info }}'
+            LYRICS_TEXT='${{ github.event.inputs.lyrics_text }}'
             OUTPUT_FORMAT="${{ github.event.inputs.format }}"
             JOB_ID="${{ github.event.inputs.job_id }}"
           else
-            AUDIO_URL="${{ github.event.client_payload.audio_url }}"
-            LYRICS_TEXT="${{ github.event.client_payload.lyrics_text }}"
+            AUDIO_INFO='${{ github.event.client_payload.audio_file_info }}'
+            LYRICS_TEXT='${{ github.event.client_payload.lyrics_text }}'
             OUTPUT_FORMAT="${{ github.event.client_payload.format }}"
             JOB_ID="${{ github.event.client_payload.job_id }}"
           fi
           
+          echo "Processing with Job ID: $JOB_ID"
+          echo "Output format: $OUTPUT_FORMAT"
+          
           # Run the alignment script
           python align_lyrics.py \
-            --audio "$AUDIO_URL" \
+            --audio "$AUDIO_INFO" \
             --lyrics "$LYRICS_TEXT" \
             --output-format "$OUTPUT_FORMAT" \
             --job-id "$JOB_ID"
             
+          echo "Alignment processing completed!"
+          
+      - name: List output files
+        run: |
+          echo "=== Generated Output Files ==="
+          ls -la output/
+          echo ""
+          echo "=== File Contents Preview ==="
+          for file in output/*; do
+            echo "--- $file ---"
+            head -20 "$file"
+            echo ""
+          done
+          
       - name: Upload results
         uses: actions/upload-artifact@v4
         if: always()
@@ -103,12 +135,22 @@ jobs:
           path: output/
           retention-days: 7
           
-      - name: Upload logs
+      - name: Upload workflow logs
         uses: actions/upload-artifact@v4
         if: failure()
         with:
           name: debug-logs-${{ github.event.client_payload.job_id || github.event.inputs.job_id || 'manual' }}
           path: |
             *.log
-            /tmp/*.log
+            /home/runner/work/_temp/*.log
           retention-days: 3
+          if-no-files-found: ignore
+          
+      - name: Summary
+        run: |
+          echo "=== Processing Summary ==="
+          echo "✅ Job completed successfully"
+          echo "📁 Check the 'Artifacts' section above to download results"
+          echo "🔗 Job ID: ${{ github.event.client_payload.job_id || github.event.inputs.job_id || 'manual' }}"
+          echo "📊 Files generated: $(ls -1 output/ | wc -l)"
+          echo "💡 This is a demo version - in production, real AI alignment would be performed"
