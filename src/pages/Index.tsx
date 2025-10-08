@@ -10,14 +10,7 @@ const Index = () => {
   return (
     <div className="min-h-screen">
       <Hero />
-      
-      {/* Temporary debug component - remove after testing */}
-      <section className="py-8">
-        <div className="container max-w-4xl mx-auto px-4">
-          <GitHubTokenTest />
-        </div>
-      </section>
-      
+            
       <ProcessSteps />
       
       <section className="py-20">
