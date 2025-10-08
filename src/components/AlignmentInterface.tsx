@@ -4,7 +4,7 @@
  */
 
 import React, { useState } from 'react';
-import { useAutoLyrixAlign } from './useAutoLyrixAlign';
+import { useAutoLyrixAlign } from '@/hooks/useAutoLyrixAlign';
 
 // Assuming you're using shadcn/ui components (which you have installed)
 import { Button } from "@/components/ui/button";
@@ -32,17 +32,16 @@ export function AlignmentInterface({ className }: AlignmentInterfaceProps) {
     currentJob,
     isProcessing,
     startAlignment,
-    resetJob,
-    downloadResult,
+    reset,
     progress,
     status,
-    message,
     error,
-    results,
+    result,
     isCompleted,
-    isFailed,
-    hasResults
+    isFailed
   } = useAutoLyrixAlign();
+
+  const hasResults = !!result;
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -208,9 +207,9 @@ export function AlignmentInterface({ className }: AlignmentInterfaceProps) {
             <div className="space-y-2">
               <div className="flex justify-between text-sm">
                 <span>Progress</span>
-                <span>{progress}%</span>
+                <span>{progress.percentage}%</span>
               </div>
-              <Progress value={progress} className="w-full" />
+              <Progress value={progress.percentage} className="w-full" />
             </div>
 
             {/* Status Message */}
@@ -218,7 +217,7 @@ export function AlignmentInterface({ className }: AlignmentInterfaceProps) {
               <Badge variant={isFailed ? "destructive" : isCompleted ? "default" : "secondary"}>
                 {status}
               </Badge>
-              <span className="text-sm">{message}</span>
+              <span className="text-sm">{progress.message}</span>
             </div>
 
             {/* Job ID */}
@@ -245,15 +244,15 @@ export function AlignmentInterface({ className }: AlignmentInterfaceProps) {
                 </p>
                 <div className="flex gap-2">
                   <Button 
-                    onClick={() => results?.[0] && downloadResult(results[0])}
+                    onClick={() => result?.downloadUrl && window.open(result.downloadUrl, '_blank')}
                     variant="outline"
                     size="sm"
                   >
                     <Download className="h-4 w-4 mr-2" />
-                    Download Results
+                    View Results on GitHub
                   </Button>
                   <Button 
-                    onClick={resetJob}
+                    onClick={reset}
                     variant="ghost"
                     size="sm"
                   >
